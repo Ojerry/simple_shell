@@ -1,60 +1,150 @@
-#include "shell.h"
-
-	char **commands = NULL;
-	char *line = NULL;
-	char *shell_name = NULL;
-	int status = 0;
+#include "holberton.h"
 
 /**
- * main - the main shell code
- * @argc: number of arguments passed
- * @argv: program arguments to be parsed
- *
- * applies the functions in utils and helpers
- * implements EOF
- * Prints error on Failure
- * Return: 0 on success
+ * shell - simple shell
+ * @build: input build
  */
-
-
-int main(int argc __attribute__((unused)), char **argv)
+void shell(config *build)
 {
-	char **current_command = NULL;
-	int i, type_command = 0;
-	size_t n = 0;
-
-	signal(SIGINT, ctrl_c_handler);
-	shell_name = argv[0];
-	while (1)
+	while (true)
 	{
-		non_interactive();
-		print(" ($) ", STDOUT_FILENO);
-		if (getline(&line, &n, stdin) == -1)
-		{
-			free(line);
-			exit(status);
-		}
-			remove_newline(line);
-			remove_comment(line);
-			commands = tokenizer(line, ";");
-
-		for (i = 0; commands[i] != NULL; i++)
-		{
-			current_command = tokenizer(commands[i], " ");
-			if (current_command[0] == NULL)
-			{
-				free(current_command);
-				break;
-			}
-			type_command = parse_command(current_command[0]);
-
-			/* initializer -   */
-			initializer(current_command, type_command);
-			free(current_command);
-		}
-		free(commands);
+		checkAndGetLine(build);
+		if (splitString(build) == false)
+			continue;
+		if (findBuiltIns(build) == true)
+			continue;
+		checkPath(build);
+		forkAndExecute(build);
 	}
-	free(line);
+}
 
-	return (status);
+/**
+ * checkAndGetLine - check stdin and retrieves next line; handles
+ * prompt display
+ * @build: input build
+ */
+void checkAndGetLine(config *build)
+{
+	register int len;
+	size_t bufferSize = 0;
+	char *ptr, *ptr2;
+
+	build->args = NULL;
+	build->envList = NULL;
+	build->lineCounter++;
+	if (isatty(STDIN_FILENO))
+		displayPrompt();
+	len = getline(&build->buffer, &bufferSize, stdin);
+	if (len == EOF)
+	{
+		freeMembers(build);
+		if (isatty(STDIN_FILENO))
+			displayNewLine();
+		if (build->errorStatus)
+			exit(build->errorStatus);
+		exit(EXIT_SUCCESS);
+
+	}
+	ptr = _strchr(build->buffer, '\n');
+	ptr2 = _strchr(build->buffer, '\t');
+	if (ptr || ptr2)
+		insertNullByte(build->buffer, len - 1);
+	stripComments(build->buffer);
+}
+
+/**
+ * stripComments - remove comments from input string
+ * @str: input string
+ * Return: length of remaining string
+ */
+void stripComments(char *str)
+{
+	register int i = 0;
+	_Bool notFirst = false;
+
+	while (str[i])
+	{
+		if (i == 0 && str[i] == '#')
+		{
+			insertNullByte(str, i);
+			return;
+		}
+		if (notFirst)
+		{
+			if (str[i] == '#' && str[i - 1] == ' ')
+			{
+				insertNullByte(str, i);
+				return;
+			}
+		}
+		i++;
+		notFirst = true;
+	}
+}
+
+/**
+ * forkAndExecute - fork current build and execute processes
+ * @build: input build
+ */
+void forkAndExecute(config *build)
+{
+	int status;
+	pid_t f1 = fork();
+
+	convertLLtoArr(build);
+	if (f1 == -1)
+	{
+		perror("error\n");
+		freeMembers(build);
+		freeArgs(build->envList);
+		exit(1);
+	}
+	if (f1 == 0)
+	{
+		if (execve(build->fullPath, build->args, build->envList) == -1)
+		{
+			errorHandler(build);
+			freeMembers(build);
+			freeArgs(build->envList);
+			if (errno == ENOENT)
+				exit(127);
+			if (errno == EACCES)
+				exit(126);
+		}
+	} else
+	{
+		wait(&status);
+		if (WIFEXITED(status))
+			build->errorStatus = WEXITSTATUS(status);
+		freeArgsAndBuffer(build);
+		freeArgs(build->envList);
+	}
+}
+
+/**
+ * convertLLtoArr - convert linked list to array
+ * @build: input build
+ */
+void convertLLtoArr(config *build)
+{
+	register int i = 0;
+	size_t count = 0;
+	char **envList = NULL;
+	linked_l *tmp = build->env;
+
+	count = list_len(build->env);
+	envList = malloc(sizeof(char *) * (count + 1));
+	if (!envList)
+	{
+		perror("Malloc failed\n");
+		exit(1);
+	}
+	while (tmp)
+	{
+		envList[i] = _strdup(tmp->string);
+		tmp = tmp->next;
+		i++;
+	}
+	envList[i] = NULL;
+	build->envList = envList;
 }
